@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aisle-qdrant-storage
+  namespace: aisle-agent
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aisle-qdrant
+  namespace: aisle-agent
+  labels:
+    app: aisle-qdrant
+    tier: vector-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aisle-qdrant
+      tier: vector-db
+  template:
+    metadata:
+      labels:
+        app: aisle-qdrant
+        tier: vector-db
+    spec:
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.12.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 6333
+          name: http
+        - containerPort: 6334
+          name: grpc
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 6333
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: qdrant-storage
+        persistentVolumeClaim:
+          claimName: aisle-qdrant-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aisle-qdrant-service
+  namespace: aisle-agent
+  labels:
+    app: aisle-qdrant
+    tier: vector-db
+spec:
+  type: ClusterIP
+  selector:
+    app: aisle-qdrant
+    tier: vector-db
+  ports:
+  - name: http
+    port: 6333
+    targetPort: 6333
+  - name: grpc
+    port: 6334
+    targetPort: 6334

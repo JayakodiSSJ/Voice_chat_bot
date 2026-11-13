@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aisle-frontend
+  namespace: aisle-agent
+  labels:
+    app: aisle-frontend
+    tier: frontend
+spec:
+  replicas: 2  # Run 2 instances for redundancy
+  selector:
+    matchLabels:
+      app: aisle-frontend
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: aisle-frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: aisle-frontend
+        image: tharukadi/aisle-frontend:latest
+        imagePullPolicy: IfNotPresent  
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5

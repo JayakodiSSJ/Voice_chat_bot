@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aisle-postgres-secret
+  namespace: aisle-agent
+type: Opaque
+stringData:
+  POSTGRES_DB: agentstore
+  POSTGRES_USER: agentstore
+  POSTGRES_PASSWORD: change-me-before-production
+  DATABASE_URL: postgresql://agentstore:change-me-before-production@aisle-postgres-service:5432/agentstore
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aisle-postgres-storage
+  namespace: aisle-agent
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aisle-postgres
+  namespace: aisle-agent
+  labels:
+    app: aisle-postgres
+    tier: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aisle-postgres
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: aisle-postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: aisle-postgres-secret
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: aisle-postgres-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: aisle-postgres-secret
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - agentstore
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - agentstore
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: aisle-postgres-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aisle-postgres-service
+  namespace: aisle-agent
+  labels:
+    app: aisle-postgres
+    tier: database
+spec:
+  type: ClusterIP
+  selector:
+    app: aisle-postgres
+    tier: database
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432

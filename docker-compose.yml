@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aisle-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: agentstore
+      POSTGRES_USER: agentstore
+      POSTGRES_PASSWORD: agentstore_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aisle-qdrant
+    restart: always
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  backend:
+    build: ./Backend_Agentstore
+    container_name: aisle-backend
+    restart: always
+    sysctls:
+      net.ipv4.tcp_timestamps: "0"
+    expose:
+      - "5000"
+
+    env_file:
+      - ./Backend_Agentstore/.env
+
+    environment:
+      DATABASE_URL: postgresql://agentstore:agentstore_dev_password@postgres:5432/agentstore
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_VECTOR_SIZE: 1536
+
+    depends_on:
+      - postgres
+      - qdrant
+
+  frontend:
+    build: ./chatbot
+    container_name: aisle-frontend
+    restart: always
+    sysctls:
+      net.ipv4.tcp_timestamps: "0"
+    ports:
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  qdrant_storage:

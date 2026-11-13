@@ -1,0 +1,35 @@
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: aisle-frontend-service
+#   namespace: aisle-agent
+#   labels:
+#     app: aisle-frontend
+# spec:
+#   type: ClusterIP  # Keep frontend internal and expose it only through Ingress
+#   selector:
+#     app: aisle-frontend
+#     tier: frontend
+#   ports:
+#   - port: 80
+#     targetPort: 80
+#     protocol: TCP
+#     name: http
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: aisle-frontend-service
+  namespace: aisle-agent
+  labels:
+    app: aisle-frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: aisle-frontend
+    tier: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http

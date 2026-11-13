@@ -1,0 +1,50 @@
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+Include/
+Lib/
+Scripts/
+pyvenv.cfg
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Flask / local runtime data
+instance/
+flask_session/
+
+# Local SQLite database files
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Logs
+*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+#generated workflow files for custom agents
+generated_workflows/
+
+# untrack local db file
+agentstore.sqlite3

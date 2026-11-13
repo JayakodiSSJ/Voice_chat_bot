@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aisle-ingress
+  namespace: aisle-agent
+  labels:
+    app: aisle
+spec:
+  ingressClassName: nginx  # Requires nginx-ingress controller
+  rules:
+  - host: aisle.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aisle-frontend-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: aisle-backend-service
+            port:
+              number: 5000

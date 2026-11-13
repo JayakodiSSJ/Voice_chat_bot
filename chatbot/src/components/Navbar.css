@@ -1,0 +1,185 @@
+/* ---------------- Navbar Component ---------------- */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&display=swap');
+
+
+.navbar-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1000;
+  padding: 15px 20px;
+  font-family: 'Outfit', 'Sora', sans-serif;
+
+  /* Frosted glass effect */
+  background-color: rgba(25, 25, 45, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  /* Use box-sizing for easier width calculations */
+  box-sizing: border-box;
+}
+
+/* Main flex container inside the header */
+.navbar-container {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Left side (Logo + Desktop Nav) */
+.navbar-left {
+  display: flex;
+  align-items: center;
+}
+
+.logo-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.logo-image {
+  height: 40px;
+  display: block; /* Fixes potential small gaps */
+}
+
+/* Desktop navigation */
+.nav-desktop {
+  margin-left: 20px;
+  display: none; /* Hidden by default */
+}
+
+/* Wrapper for desktop links */
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 8px; /* Give them a little space */
+}
+
+/* Desktop navigation links */
+.nav-link {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  font-size: 16px;
+  padding: 6px 12px;
+  margin: 0 4px;
+  color: #c084fc;
+  text-transform: capitalize;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+}
+
+/* Hover and Active state for desktop */
+.nav-link:hover {
+  color: #e9d5ff;
+  border-color: rgba(192, 132, 252, 0.5);
+  transform: translateY(-1px);
+}
+
+.nav-link.active {
+  color: #ffffff;
+  border-color: #a855f7;
+  font-weight: 600;
+  text-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
+}
+
+/* Right side (Auth + Mobile Menu) */
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* "Browse Agents" / "Sign Out" button */
+.auth-button {
+  background: linear-gradient(135deg, #9333ea, #a855f7);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+/* Mobile "hamburger" menu button */
+.mobile-menu-button {
+  display: inline-block; /* Visible by default on mobile */
+  font-size: 24px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9333ea;
+}
+
+/* ---------------- Mobile Menu Dropdown ---------------- */
+
+.mobile-menu-dropdown {
+  margin-top: 10px;
+  background: rgba(20, 20, 40, 0.95);
+  border-radius: 12px;
+  padding: 20px;
+  width: 75%;
+}
+
+/* Mobile navigation links container */
+.nav-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+/* Wrapper for mobile links */
+.navbar-links-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Mobile navigation links */
+.mobile-nav-link {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  color: #c084fc;
+  font-size: 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 2px solid transparent;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 8px 0;
+  text-decoration: none;
+  text-transform: capitalize;
+}
+
+.mobile-nav-link:hover {
+  color: #e9d5ff;
+  border-color: rgba(192, 132, 252, 0.5);
+}
+
+.mobile-nav-link.active {
+  color: #ffffff;
+  border-color: #a855f7;
+  font-weight: 600;
+}
+
+/* At 769px and wider (tablets/desktops) */
+@media (min-width: 769px) {
+  .nav-desktop {
+    display: flex; /* Show desktop nav */
+  }
+
+  .mobile-menu-button {
+    display: none; /* Hide hamburger button */
+  }
+}

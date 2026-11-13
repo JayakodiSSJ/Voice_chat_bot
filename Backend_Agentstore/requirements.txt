@@ -1,0 +1,16 @@
+Flask==3.1.1
+requests==2.32.3
+Flask-Cors==6.0.0
+gunicorn==23.0.0
+PyJWT==2.10.1
+cryptography
+Flask-Mail
+python-dotenv
+piper-tts==1.8.0
+qdrant-client==1.12.1
+pypdf==5.1.0
+stripe==15.2.1
+psycopg[binary]==3.2.3
+PyMySQL==1.1.1
+pyodbc==5.2.0
+oracledb==2.5.1

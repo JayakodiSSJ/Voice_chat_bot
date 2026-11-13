@@ -1,0 +1,46 @@
+.app-top-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 15px 20px;
+  box-sizing: border-box;
+  z-index: 1200;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.app-top-header-logo {
+  height: 40px;
+  width: auto;
+  margin: 0;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.app-top-header-logo.clickable {
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .app-top-header-logo {
+    height: 40px;
+    width: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-top-header {
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 15px 20px;
+  }
+
+  .app-top-header-logo {
+    height: 40px;
+    width: auto;
+  }
+}

@@ -1,0 +1,315 @@
+:root {
+    --demo-primary: #6366f1;
+    --demo-secondary: #a855f7;
+    --demo-accent: #ec4899;
+    --demo-bg: #0f172a;
+    --demo-card-bg: rgba(30, 41, 59, 0.7);
+    --demo-text: #f8fafc;
+    --demo-text-dim: #94a3b8;
+}
+
+.project-demo {
+    background-image: url('../images.jpg');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    color: var(--demo-text);
+    min-height: 100vh;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+    position: relative;
+}
+
+/* Dark overlay so text stays legible over the photo */
+.project-demo::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 8, 20, 0.78);
+    z-index: 0;
+    pointer-events: none;
+}
+
+.project-demo>* {
+    position: relative;
+    z-index: 1;
+}
+
+.demo-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 80px 20px;
+}
+
+/* --- Hero Section --- */
+.demo-hero {
+    text-align: center;
+    padding: 100px 0 60px;
+    position: relative;
+}
+
+.demo-hero::before {
+    content: '';
+    position: absolute;
+    top: -100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.05) 50%, transparent 70%);
+    z-index: 0;
+    pointer-events: none;
+}
+
+.demo-hero h1 {
+    font-size: 4rem;
+    font-weight: 800;
+    margin-bottom: 24px;
+    background: linear-gradient(to right, #fff, #94a3b8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    position: relative;
+    z-index: 1;
+}
+
+.demo-hero p {
+    font-size: 1.25rem;
+    color: var(--demo-text-dim);
+    max-width: 800px;
+    margin: 0 auto 40px;
+    line-height: 1.6;
+}
+
+/* --- Section headers --- */
+.section-header {
+    text-align: center;
+    margin-bottom: 60px;
+}
+
+.section-header h2 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.section-header .line {
+    width: 60px;
+    height: 4px;
+    background: linear-gradient(to right, var(--demo-primary), var(--demo-secondary));
+    margin: 0 auto;
+    border-radius: 2px;
+}
+
+/* --- Capabilities Grid --- */
+.capabilities-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 100px;
+}
+
+.capability-card {
+    background: var(--demo-card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 40px;
+    border-radius: 24px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+}
+
+.capability-card:hover {
+    transform: translateY(-10px);
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.capability-card .icon {
+    font-size: 2.5rem;
+    margin-bottom: 20px;
+}
+
+.capability-card h3 {
+    font-size: 1.5rem;
+    margin-bottom: 16px;
+    color: #fff;
+}
+
+.capability-card p {
+    color: var(--demo-text-dim);
+    line-height: 1.6;
+}
+
+/* (center-card override removed — all 4 cards sit in one row) */
+
+
+/* --- User Flow Timeline --- */
+.user-flow {
+    position: relative;
+    max-width: 900px;
+    margin: 0 auto 100px;
+}
+
+.flow-step {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 60px;
+    position: relative;
+}
+
+.flow-step::before {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 60px;
+    bottom: -40px;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--demo-primary), transparent);
+    z-index: 0;
+}
+
+.flow-step:last-child::before {
+    display: none;
+}
+
+.step-number {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, var(--demo-primary), var(--demo-secondary));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+    z-index: 1;
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+}
+
+.step-content {
+    background: var(--demo-card-bg);
+    padding: 30px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    flex-grow: 1;
+}
+
+.step-content h3 {
+    font-size: 1.25rem;
+    margin-bottom: 12px;
+    color: var(--demo-primary);
+}
+
+.step-content p {
+    color: var(--demo-text-dim);
+    line-height: 1.5;
+}
+
+/* --- Get Started Section --- */
+.get-started-section {
+    margin-top: 80px;
+    text-align: center;
+}
+
+.get-started-sub {
+    color: var(--demo-text-dim);
+    font-size: 1.1rem;
+    margin-top: 16px;
+    line-height: 1.6;
+}
+
+.get-started-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 48px;
+    flex-wrap: wrap;
+}
+
+.gs-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 40px;
+    border-radius: 16px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.3s ease;
+    min-width: 200px;
+    justify-content: center;
+}
+
+.gs-btn-icon {
+    font-size: 1.3rem;
+}
+
+.gs-btn-signin {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    border: 2px solid rgba(99, 102, 241, 0.4);
+}
+
+.gs-btn-signin:hover {
+    background: rgba(99, 102, 241, 0.3);
+    border-color: #6366f1;
+    color: #fff;
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(99, 102, 241, 0.25);
+}
+
+.gs-btn-signup {
+    background: linear-gradient(135deg, var(--demo-primary), var(--demo-secondary));
+    color: #fff;
+    border: 2px solid transparent;
+}
+
+.gs-btn-signup:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(168, 85, 247, 0.4);
+    filter: brightness(1.1);
+}
+
+@media (max-width: 1024px) {
+    .capabilities-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .demo-hero h1 {
+        font-size: 2.5rem;
+    }
+
+    .capabilities-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .flow-step {
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .flow-step::before {
+        left: 32px;
+        top: 64px;
+    }
+
+    .get-started-buttons {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .gs-btn {
+        width: 100%;
+        max-width: 320px;
+    }
+}
