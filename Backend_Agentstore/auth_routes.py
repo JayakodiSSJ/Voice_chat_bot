@@ -45,8 +45,9 @@ from gemini_service import (
     MAX_AUDIO_BYTES,
     detect_transcript_language,
     gemini_service,
-    normalize_sinhala_tts_text,
+    select_tts_provider,
 )
+from whisper_stt_service import stt_provider, whisper_stt
 from token_usage import TokenUsageCollector, capture_token_usage
 from agent_deployment_service import agent_deployment_service
 from custom_agent_chat_service import custom_agent_chat_service
@@ -2934,6 +2935,25 @@ def register_auth_routes(app, mail) -> None:
                 (company_id, agent_id, source_type, source_value),
             )
             source_id = int(source["id"] if source else cur.lastrowid)
+            # Saving an agent can request the same source several times within seconds.
+            # Reuse a job that is still pending/running instead of crawling in parallel.
+            # Jobs older than the cutoff are ignored so a crashed worker cannot block re-syncs.
+            stale_minutes = max(1, int(os.getenv("KB_INGESTION_STALE_MINUTES", "30") or 30))
+            active_since = (datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)).isoformat()
+            active_job = fetch_one(
+                conn,
+                """
+                SELECT id FROM kb_ingestion_jobs
+                WHERE company_id = ? AND source_id = ? AND status IN ('pending', 'running')
+                    AND requested_at >= ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (company_id, source_id, active_since),
+            )
+            if active_job:
+                conn.commit()
+                return source_id, int(active_job["id"]), collection, False
             job_cur = conn.execute(
                 """
                 INSERT INTO kb_ingestion_jobs
@@ -2943,7 +2963,25 @@ def register_auth_routes(app, mail) -> None:
                 (company_id, agent_id, source_id, collection, now),
             )
             conn.commit()
-            return source_id, int(job_cur.lastrowid), collection
+            return source_id, int(job_cur.lastrowid), collection, True
+
+    def _start_kb_ingestion(company_id: int, agent_id: int, source_type: str, source_value: str, token=None, options=None) -> dict[str, Any]:
+        """Create an ingestion job and run it in the background, unless one is already active."""
+        source_id, job_id, collection, created = _create_kb_ingestion_job(company_id, agent_id, source_type, source_value)
+        if created:
+            import threading
+
+            threading.Thread(
+                target=run_ingestion_thread,
+                args=(app.app_context(), job_id, company_id, agent_id, source_id, source_type, source_value, token, options),
+            ).start()
+        else:
+            print(
+                f"DEBUG ingestion_job_reused: job={job_id} company={company_id} agent={agent_id} "
+                f"source={source_type} source_id={source_id} (already pending or running)",
+                flush=True,
+            )
+        return {"source_id": source_id, "job_id": job_id, "collection": collection, "already_running": not created}
 
     def run_ingestion_thread(app_ctx, job_id, company_id, agent_id, source_id, source, value, token=None, options=None):
         with app_ctx:
@@ -3070,6 +3108,10 @@ def register_auth_routes(app, mail) -> None:
             options["max_depth"] = max_depth
         if restrict_to_start_path is not None:
             options["restrict_to_start_path"] = restrict_to_start_path
+        # "auto" renders JavaScript-built pages in a headless browser, "always"/"never" force it.
+        browser_mode = next((value.get(key) for key in ("browser", "browserMode") if value.get(key) is not None), None)
+        if str(browser_mode or "").strip().lower() in {"auto", "always", "never"}:
+            options["browser"] = str(browser_mode).strip().lower()
         return options
 
     def _website_sources_from_config(kb_config: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -3210,41 +3252,24 @@ def register_auth_routes(app, mail) -> None:
         started = []
         skipped = []
 
-        import threading
-
         for web_source in web_sources:
             url = web_source["url"]
-            source_id, job_id, collection = _create_kb_ingestion_job(company_id, agent_id, "website", url)
-            thread = threading.Thread(
-                target=run_ingestion_thread,
-                args=(app.app_context(), job_id, company_id, agent_id, source_id, "website", url, None, web_source["options"]),
-            )
-            thread.start()
-            started.append({"source_type": "website", "source_value": url, "job_id": job_id, "collection": collection})
+            job = _start_kb_ingestion(company_id, agent_id, "website", url, options=web_source["options"])
+            started.append({"source_type": "website", "source_value": url, "job_id": job["job_id"], "collection": job["collection"]})
 
         for folder in onedrive_folders:
             if not token:
                 skipped.append({"source_type": "onedrive", "source_value": folder, "reason": "missing_microsoft_token"})
                 continue
-            source_id, job_id, collection = _create_kb_ingestion_job(company_id, agent_id, "onedrive", folder)
-            thread = threading.Thread(
-                target=run_ingestion_thread,
-                args=(app.app_context(), job_id, company_id, agent_id, source_id, "onedrive", folder, token),
-            )
-            thread.start()
-            started.append({"source_type": "onedrive", "source_value": folder, "job_id": job_id, "collection": collection})
+            job = _start_kb_ingestion(company_id, agent_id, "onedrive", folder, token=token)
+            started.append({"source_type": "onedrive", "source_value": folder, "job_id": job["job_id"], "collection": job["collection"]})
 
         for folder in sharepoint_folders:
             if not token:
                 skipped.append({"source_type": "sharepoint", "source_value": folder, "reason": "missing_microsoft_token"})
                 continue
-            source_id, job_id, collection = _create_kb_ingestion_job(company_id, agent_id, "sharepoint", folder)
-            thread = threading.Thread(
-                target=run_ingestion_thread,
-                args=(app.app_context(), job_id, company_id, agent_id, source_id, "sharepoint", folder, token),
-            )
-            thread.start()
-            started.append({"source_type": "sharepoint", "source_value": folder, "job_id": job_id, "collection": collection})
+            job = _start_kb_ingestion(company_id, agent_id, "sharepoint", folder, token=token)
+            started.append({"source_type": "sharepoint", "source_value": folder, "job_id": job["job_id"], "collection": job["collection"]})
 
         return {"started": started, "skipped": skipped}
 
@@ -3269,16 +3294,8 @@ def register_auth_routes(app, mail) -> None:
         if not agent:
             return _json_error(404, "agent_not_found", "Custom agent not found for this company.")
 
-        source_id, job_id, collection = _create_kb_ingestion_job(company_id, int(agent["id"]), "website", url)
-
-        import threading
-        thread = threading.Thread(
-            target=run_ingestion_thread, 
-            args=(app.app_context(), job_id, company_id, int(agent["id"]), source_id, "website", url, None, crawl_options)
-        )
-        thread.start()
-        
-        return jsonify({"status": "started", "job_id": job_id, "source_id": source_id, "collection": collection})
+        job = _start_kb_ingestion(company_id, int(agent["id"]), "website", url, options=crawl_options)
+        return jsonify({"status": "already_running" if job["already_running"] else "started", "job_id": job["job_id"], "source_id": job["source_id"], "collection": job["collection"]})
 
     @app.route("/api/auth/ingest-onedrive", methods=["POST"])
     @require_auth(app)
@@ -3324,16 +3341,8 @@ def register_auth_routes(app, mail) -> None:
         if not agent:
             return _json_error(404, "agent_not_found", "Custom agent not found for this company.")
 
-        source_id, job_id, collection = _create_kb_ingestion_job(company_id, int(agent["id"]), "onedrive", folder_link)
-
-        import threading
-        thread = threading.Thread(
-            target=run_ingestion_thread,
-            args=(app.app_context(), job_id, company_id, int(agent["id"]), source_id, "onedrive", folder_link, token)
-        )
-        thread.start()
-        
-        return jsonify({"status": "started", "job_id": job_id, "source_id": source_id, "collection": collection})
+        job = _start_kb_ingestion(company_id, int(agent["id"]), "onedrive", folder_link, token=token)
+        return jsonify({"status": "already_running" if job["already_running"] else "started", "job_id": job["job_id"], "source_id": job["source_id"], "collection": job["collection"]})
 
     @app.route("/api/auth/ingest-sharepoint", methods=["POST"])
     @require_auth(app)
@@ -3374,16 +3383,8 @@ def register_auth_routes(app, mail) -> None:
         if not agent:
             return _json_error(404, "agent_not_found", "Custom agent not found for this company.")
 
-        source_id, job_id, collection = _create_kb_ingestion_job(company_id, int(agent["id"]), "sharepoint", folder_link)
-
-        import threading
-        thread = threading.Thread(
-            target=run_ingestion_thread,
-            args=(app.app_context(), job_id, company_id, int(agent["id"]), source_id, "sharepoint", folder_link, token)
-        )
-        thread.start()
-
-        return jsonify({"status": "started", "job_id": job_id, "source_id": source_id, "collection": collection})
+        job = _start_kb_ingestion(company_id, int(agent["id"]), "sharepoint", folder_link, token=token)
+        return jsonify({"status": "already_running" if job["already_running"] else "started", "job_id": job["job_id"], "source_id": job["source_id"], "collection": job["collection"]})
 
     @app.route("/api/auth/api-tool/verify", methods=["POST"])
     @require_auth(app)
@@ -4885,6 +4886,14 @@ def register_auth_routes(app, mail) -> None:
     @app.route("/api/auth/voice/ready", methods=["GET"])
     @require_auth(app)
     def voice_service_readiness():
+        if stt_provider() == "whisper":
+            if not whisper_stt.is_installed():
+                return _json_error(
+                    503,
+                    "speech_model_unavailable",
+                    "Voice service is unavailable because the local Whisper model is not installed.",
+                )
+            return jsonify({"ready": True, "provider": "whisper"})
         if not gemini_service.is_configured():
             return _json_error(
                 503,
@@ -4896,7 +4905,8 @@ def register_auth_routes(app, mail) -> None:
     @app.route("/api/auth/voice/stt", methods=["POST"])
     @require_auth(app)
     def voice_speech_to_text():
-        if not gemini_service.is_configured():
+        use_whisper = stt_provider() == "whisper"
+        if not use_whisper and not gemini_service.is_configured():
             return _json_error(
                 503,
                 "gemini_not_configured",
@@ -4930,6 +4940,31 @@ def register_auth_routes(app, mail) -> None:
         audio_bytes = audio_file.stream.read(MAX_AUDIO_BYTES + 1)
         if len(audio_bytes) > MAX_AUDIO_BYTES:
             return _json_error(413, "audio_too_large", "The audio recording exceeds the 5 MB limit.")
+
+        if use_whisper:
+            try:
+                transcript = whisper_stt.transcribe(
+                    audio_bytes,
+                    language_code=language_choices[selected_language],
+                )
+            except ValueError as exc:
+                return _json_error(422, "speech_not_recognized", str(exc))
+            except Exception as exc:  # Model missing, decode failure, or runtime error.
+                print(f"ERROR Whisper transcription failed: {type(exc).__name__}: {exc}", flush=True)
+                return _json_error(
+                    503,
+                    "speech_model_unavailable",
+                    "Local speech recognition is unavailable. Please try again.",
+                )
+            detected_language = language_choices[selected_language] or detect_transcript_language(transcript)
+            return jsonify(
+                {
+                    "text": transcript,
+                    "language": detected_language,
+                    "confidence": None,
+                    "low_confidence": True,
+                }
+            )
 
         try:
             transcript = gemini_service.transcribe_audio(
@@ -4975,7 +5010,8 @@ def register_auth_routes(app, mail) -> None:
         if not text:
             return _json_error(400, "missing_text", "Text is required.")
 
-        if not gemini_service.is_configured():
+        provider = select_tts_provider(text)
+        if provider == "gemini" and not gemini_service.is_configured():
             return _json_error(
                 503,
                 "gemini_not_configured",
@@ -4984,8 +5020,6 @@ def register_auth_routes(app, mail) -> None:
 
         contains_sinhala = any("\u0d80" <= char <= "\u0dff" for char in text)
         contains_tamil = any("\u0b80" <= char <= "\u0bff" for char in text)
-        piper_text = normalize_sinhala_tts_text(text)
-        provider = "piper" if piper_text is not None else "gemini"
         contains_latin = any(char.isascii() and char.isalpha() for char in text)
         if (contains_sinhala and (contains_tamil or contains_latin)) or (contains_tamil and contains_latin):
             language = "mixed"
@@ -5033,13 +5067,14 @@ def register_auth_routes(app, mail) -> None:
             if exc.status_code in {401, 403}:
                 return _json_error(503, "gemini_not_configured", "Gemini voice access is not available for this API key.")
             return _json_error(502, "speech_synthesis_failed", "Gemini could not generate speech. Please try again.")
-        except RuntimeError:
+        except RuntimeError as exc:
+            if provider == "piper":
+                print(f"ERROR Piper speech synthesis failed: {exc}", flush=True)
+                return _json_error(502, "speech_synthesis_failed", "Local speech generation failed. Please try again.")
             return _json_error(502, "speech_synthesis_failed", "Gemini could not generate speech. Please try again.")
 
         response = Response(audio_bytes, mimetype=mime_type)
-        response.headers["X-Speech-Provider"] = (
-            "piper" if piper_text is not None else "gemini"
-        )
+        response.headers["X-Speech-Provider"] = provider
         response.headers["Cache-Control"] = "no-store"
         return response
 

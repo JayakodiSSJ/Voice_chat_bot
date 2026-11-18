@@ -21,6 +21,7 @@ from qdrant_client.http import models as qdrant_models
 
 from agent_configuration_service import company_kb_collection_id
 from agent_runtime_utils import clean_text
+from browser_renderer import BrowserRenderer, normalize_browser_mode
 from openai_service import openai_service
 
 load_dotenv()
@@ -267,10 +268,25 @@ class IngestionService:
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("Website source must be an http or https URL.")
 
-        response = requests.get(start_url, timeout=20, headers={"User-Agent": "AgentStoreIngestion/1.0"})
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "").lower()
         filename = unquote(os.path.basename(parsed.path or ""))
+        try:
+            response = requests.get(start_url, timeout=20, headers={"User-Agent": "AgentStoreIngestion/1.0"})
+            response.raise_for_status()
+        except Exception as exc:
+            # Some sites refuse plain HTTP clients but serve a real browser. Let the crawler
+            # retry the start page in the headless browser unless that is switched off.
+            browser_mode = normalize_browser_mode((crawl_options or {}).get("browser"), BrowserRenderer().mode)
+            if browser_mode == "never" or not self._browser_may_help(exc):
+                raise
+            return self._crawl_website(
+                company_id=company_id,
+                agent_id=agent_id,
+                source_id=source_id,
+                start_url=start_url,
+                first_response=None,
+                crawl_options=crawl_options,
+            )
+        content_type = response.headers.get("content-type", "").lower()
         if "html" in content_type or not filename:
             return self._crawl_website(
                 company_id=company_id,
@@ -299,11 +315,92 @@ class IngestionService:
         agent_id: int,
         source_id: int,
         start_url: str,
-        first_response: requests.Response,
+        first_response: requests.Response | None,
         crawl_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         options = crawl_options or {}
+        with BrowserRenderer(mode=options.get("browser")) as renderer:
+            return self._crawl_website_pages(
+                company_id=company_id,
+                agent_id=agent_id,
+                source_id=source_id,
+                start_url=start_url,
+                first_response=first_response,
+                options=options,
+                renderer=renderer,
+            )
 
+    @staticmethod
+    def _browser_may_help(exc: Exception) -> bool:
+        # A missing page stays missing in a browser; blocks and connection errors may not.
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return status not in {404, 410}
+
+    def _fetch_crawl_page(
+        self,
+        page_url: str,
+        prepared_response: requests.Response | None,
+        renderer: BrowserRenderer,
+    ) -> dict[str, Any]:
+        """Download a page, falling back to the headless browser when the plain HTML is
+        nearly empty (JavaScript-built sites) or the plain request was refused.
+
+        Returns {"links", "title", "text", "rendered", "browser_used"} or
+        {"skip": reason, "browser_used"}. "browser_used" is true whenever the browser
+        opened the page, even if that failed, so the crawler can pace itself.
+        """
+        response = None
+        fetch_error: Exception | None = None
+        try:
+            response = prepared_response or requests.get(page_url, timeout=20, headers={"User-Agent": "AgentStoreIngestion/1.0"})
+            response.raise_for_status()
+        except Exception as exc:
+            response, fetch_error = None, exc
+
+        links: list[str] = []
+        title = ""
+        text = ""
+        if response is not None:
+            if "html" not in response.headers.get("content-type", "").lower():
+                return {"skip": "non_html_crawl_page", "browser_used": False}
+            links, title = _extract_html_links_and_title(response.content)
+            text = _extract_html_text(response.content)
+        elif not self._browser_may_help(fetch_error):
+            return {"skip": str(fetch_error), "browser_used": False}
+
+        rendered = False
+        browser_used = False
+        if renderer.should_render(text, fetch_failed=response is None):
+            browser_used = True
+            try:
+                html = renderer.render(page_url)
+            except Exception as exc:
+                print(f"WARNING web_crawl: browser rendering failed for {page_url}: {exc}", flush=True)
+                if response is None:
+                    return {"skip": f"{fetch_error}; browser fallback failed: {exc}", "browser_used": True}
+            else:
+                rendered_links, rendered_title = _extract_html_links_and_title(html)
+                rendered_text = _extract_html_text(html)
+                if len(rendered_text) > len(text):
+                    text, title, rendered = rendered_text, rendered_title or title, True
+                # Keep links from both versions; JavaScript menus often add the useful ones.
+                links = list(dict.fromkeys([*links, *rendered_links]))
+        elif response is None:
+            return {"skip": str(fetch_error), "browser_used": False}
+
+        return {"links": links, "title": title, "text": text, "rendered": rendered, "browser_used": browser_used}
+
+    def _crawl_website_pages(
+        self,
+        *,
+        company_id: int,
+        agent_id: int,
+        source_id: int,
+        start_url: str,
+        first_response: requests.Response | None,
+        options: dict[str, Any],
+        renderer: BrowserRenderer,
+    ) -> dict[str, Any]:
         def option_int(name: str, fallback: int, minimum: int, maximum: int) -> int:
             try:
                 value = int(options.get(name, fallback))
@@ -322,6 +419,9 @@ class IngestionService:
         max_pages = option_int("max_pages", int(os.getenv("WEB_CRAWL_MAX_PAGES", "25")), 1, 100)
         max_depth = option_int("max_depth", int(os.getenv("WEB_CRAWL_MAX_DEPTH", "1")), 0, 5)
         delay = max(0.0, float(os.getenv("WEB_CRAWL_DELAY_SECONDS", "0.25")))
+        # Pages opened in the headless browser cost the site far more (scripts, API calls),
+        # so wait longer after those to keep the crawl polite.
+        browser_delay = max(delay, float(os.getenv("WEB_CRAWL_BROWSER_DELAY_SECONDS", "4")))
         restrict_to_start_path = option_bool(
             "restrict_to_start_path",
             os.getenv("WEB_CRAWL_RESTRICT_TO_START_PATH", "true").lower() != "false",
@@ -337,6 +437,7 @@ class IngestionService:
             "skipped": [],
             "deleted_documents": 0,
             "pages_crawled": 0,
+            "pages_rendered": 0,
         }
 
         while queue and totals["pages_crawled"] < max_pages:
@@ -353,20 +454,15 @@ class IngestionService:
                 totals["skipped"].append({"url": page_url, "reason": "not_allowed"})
                 continue
 
-            try:
-                response = prepared_response or requests.get(page_url, timeout=20, headers={"User-Agent": "AgentStoreIngestion/1.0"})
-                response.raise_for_status()
-            except Exception as exc:
-                totals["skipped"].append({"url": page_url, "reason": str(exc)})
+            page = self._fetch_crawl_page(page_url, prepared_response, renderer)
+            if "skip" in page:
+                totals["skipped"].append({"url": page_url, "reason": page["skip"]})
+                if page["browser_used"] and browser_delay:
+                    time.sleep(browser_delay)
                 continue
-
-            content_type = response.headers.get("content-type", "").lower()
-            if "html" not in content_type:
-                totals["skipped"].append({"url": page_url, "reason": "non_html_crawl_page"})
-                continue
-
-            links, title = _extract_html_links_and_title(response.content)
-            text = _extract_html_text(response.content)
+            links, title, text = page["links"], page["title"], page["text"]
+            if page["rendered"]:
+                totals["pages_rendered"] += 1
             if text:
                 try:
                     result = self._upsert_document(
@@ -398,8 +494,9 @@ class IngestionService:
                     ):
                         queue.append((next_url, depth + 1, None))
                         queued.add(next_url)
-            if delay:
-                time.sleep(delay)
+            pause = browser_delay if page["browser_used"] else delay
+            if pause:
+                time.sleep(pause)
 
         totals["deleted_documents"] = self._delete_missing_source_documents(
             company_id=company_id,

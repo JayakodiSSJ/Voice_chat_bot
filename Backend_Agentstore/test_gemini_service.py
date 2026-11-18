@@ -13,6 +13,7 @@ from gemini_service import (
     _decode_tts_audio,
     detect_transcript_language,
     normalize_sinhala_tts_text,
+    select_tts_provider,
 )
 
 
@@ -252,7 +253,10 @@ class GeminiServiceTests(unittest.TestCase):
             status_code=429,
             headers={"Retry-After": "3"},
         )
-        with patch("gemini_service.requests.post", return_value=failure):
+        with (
+            patch("gemini_service.requests.post", return_value=failure),
+            patch.dict(os.environ, {"ENGLISH_TTS_PROVIDER": "gemini"}),
+        ):
             with self.assertRaisesRegex(RuntimeError, "provider details") as error:
                 self.service.synthesize_speech(api_key="test-key", text="Hello")
         self.assertEqual(error.exception.retry_after, "3")
@@ -294,17 +298,49 @@ class GeminiServiceTests(unittest.TestCase):
         self.assertEqual(post.call_args_list[-1].kwargs["json"]["model"], "gemini-3.5-transcribe")
 
     def test_synthesis_timeout_is_not_silently_fallbacked(self):
-        with patch(
-            "gemini_service.requests.post",
-            side_effect=requests.Timeout("provider timeout"),
+        with (
+            patch(
+                "gemini_service.requests.post",
+                side_effect=requests.Timeout("provider timeout"),
+            ),
+            patch.dict(os.environ, {"ENGLISH_TTS_PROVIDER": "gemini"}),
         ):
             with self.assertRaises(requests.Timeout):
                 self.service.synthesize_speech(api_key="test-key", text="Hello")
 
     def test_invalid_timeout_configuration_is_rejected(self):
-        with patch.dict(os.environ, {"GEMINI_TTS_TIMEOUT_SECONDS": "soon"}):
+        with patch.dict(
+            os.environ,
+            {"GEMINI_TTS_TIMEOUT_SECONDS": "soon", "ENGLISH_TTS_PROVIDER": "gemini"},
+        ):
             with self.assertRaisesRegex(RuntimeError, "positive number"):
                 self.service.synthesize_speech(api_key="test-key", text="Hello")
+
+    def test_english_only_synthesis_uses_local_piper_by_default(self):
+        audio = make_wav(sample_rate=22050)
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("gemini_service.piper_english_tts.synthesize", return_value=audio) as piper_synthesize,
+            patch("gemini_service.requests.post") as post,
+        ):
+            result_audio, mime_type = self.service.synthesize_speech(
+                api_key="",
+                text="Your 10 GB package costs Rs 1500.",
+            )
+
+        self.assertEqual((result_audio, mime_type), (audio, "audio/wav"))
+        piper_synthesize.assert_called_once_with("Your 10 GB package costs Rs 1500.")
+        post.assert_not_called()
+
+    def test_tts_provider_selection(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(select_tts_provider("Hello there"), "piper")
+            self.assertEqual(select_tts_provider("ආයුබෝවන්"), "piper")
+            self.assertEqual(select_tts_provider("මට superfast package එකක් ඕනේ"), "gemini")
+            self.assertEqual(select_tts_provider("வணக்கம்"), "gemini")
+        with patch.dict(os.environ, {"ENGLISH_TTS_PROVIDER": "gemini"}, clear=True):
+            self.assertEqual(select_tts_provider("Hello there"), "gemini")
+            self.assertEqual(select_tts_provider("ආයුබෝවන්"), "piper")
 
 
 if __name__ == "__main__":

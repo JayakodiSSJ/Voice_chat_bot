@@ -7,6 +7,8 @@ cryptography
 Flask-Mail
 python-dotenv
 piper-tts==1.8.0
+faster-whisper==1.1.1
+playwright==1.49.1
 qdrant-client==1.12.1
 pypdf==5.1.0
 stripe==15.2.1

@@ -133,7 +133,8 @@ class CustomAgentChatServiceTests(unittest.TestCase):
         )
 
         instructions = call_text.call_args.kwargs["instructions"]
-        self.assertIn("only when supported by the assigned-resource results", instructions)
+        self.assertIn("Do not use general pretrained knowledge to fill gaps", instructions)
+        self.assertNotIn("Answer SLT-MOBITEL questions", instructions)
         self.assertIn("using the user's preferred language", instructions)
         self.assertIn("Do not guess missing package prices, data allowances, validity periods, or activation codes", instructions)
 

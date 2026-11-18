@@ -10,22 +10,32 @@ from piper import PiperVoice
 
 
 DEFAULT_MODEL_PATH = "/app/models/si_LK-sinhala-medium.onnx"
+DEFAULT_ENGLISH_MODEL_PATH = "/app/models/en_US-lessac-medium.onnx"
 
 
-class PiperSinhalaTTS:
-    def __init__(self) -> None:
+class PiperTTS:
+    """Local Piper voice loaded once per process from a configurable ONNX path."""
+
+    def __init__(self, *, env_name: str, default_path: str, language_name: str) -> None:
+        self._env_name = env_name
+        self._default_path = default_path
+        self._language_name = language_name
         self._voice: PiperVoice | None = None
         self._lock = threading.Lock()
 
+    def model_path(self) -> Path:
+        return Path(os.getenv(self._env_name, self._default_path).strip() or self._default_path)
+
+    def is_installed(self) -> bool:
+        model_path = self.model_path()
+        return model_path.is_file() and Path(f"{model_path}.json").is_file()
+
     def _load_voice(self) -> PiperVoice:
         if self._voice is None:
-            model_path = Path(
-                os.getenv("PIPER_SINHALA_MODEL_PATH", DEFAULT_MODEL_PATH).strip()
-                or DEFAULT_MODEL_PATH
-            )
+            model_path = self.model_path()
             config_path = Path(f"{model_path}.json")
             if not model_path.is_file() or not config_path.is_file():
-                raise RuntimeError("The local Piper Sinhala voice model is not installed.")
+                raise RuntimeError(f"The local Piper {self._language_name} voice model is not installed.")
             self._voice = PiperVoice.load(str(model_path), config_path=str(config_path))
         return self._voice
 
@@ -38,7 +48,7 @@ class PiperSinhalaTTS:
             chunks = iter(voice.synthesize(text))
             first_chunk = next(chunks, None)
             if first_chunk is None or not first_chunk.audio_int16_bytes:
-                raise RuntimeError("Piper did not generate any Sinhala speech audio.")
+                raise RuntimeError(f"Piper did not generate any {self._language_name} speech audio.")
 
             wav_buffer = io.BytesIO()
             with wave.open(wav_buffer, "wb") as wav_file:
@@ -55,4 +65,23 @@ class PiperSinhalaTTS:
             return audio
 
 
+class PiperSinhalaTTS(PiperTTS):
+    def __init__(self) -> None:
+        super().__init__(
+            env_name="PIPER_SINHALA_MODEL_PATH",
+            default_path=DEFAULT_MODEL_PATH,
+            language_name="Sinhala",
+        )
+
+
+class PiperEnglishTTS(PiperTTS):
+    def __init__(self) -> None:
+        super().__init__(
+            env_name="PIPER_ENGLISH_MODEL_PATH",
+            default_path=DEFAULT_ENGLISH_MODEL_PATH,
+            language_name="English",
+        )
+
+
 piper_sinhala_tts = PiperSinhalaTTS()
+piper_english_tts = PiperEnglishTTS()

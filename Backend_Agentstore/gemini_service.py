@@ -12,7 +12,7 @@ import wave
 import requests
 from dotenv import load_dotenv
 
-from piper_tts_service import piper_sinhala_tts
+from piper_tts_service import piper_english_tts, piper_sinhala_tts
 
 load_dotenv()
 
@@ -161,6 +161,28 @@ def normalize_sinhala_tts_text(text: str) -> str | None:
     ):
         return None
     return normalized_text
+
+
+def english_tts_provider() -> str:
+    """Return the configured English TTS provider: local "piper" (default) or "gemini"."""
+    provider = os.getenv("ENGLISH_TTS_PROVIDER", "").strip().lower()
+    return provider if provider in {"piper", "gemini"} else "piper"
+
+
+def is_english_only_text(text: str) -> bool:
+    has_sinhala = any("඀" <= char <= "෿" for char in text)
+    has_tamil = any("஀" <= char <= "௿" for char in text)
+    has_latin = any(char.isascii() and char.isalpha() for char in text)
+    return has_latin and not has_sinhala and not has_tamil
+
+
+def select_tts_provider(text: str) -> str:
+    """Pick the speech engine for a reply: "piper" for local voices, otherwise "gemini"."""
+    if normalize_sinhala_tts_text(text) is not None:
+        return "piper"
+    if is_english_only_text(text) and english_tts_provider() == "piper":
+        return "piper"
+    return "gemini"
 
 
 def _decode_tts_audio(audio_data: str, mime_type: str | None) -> tuple[bytes, str]:
@@ -428,8 +450,10 @@ class GeminiService:
         piper_text = normalize_sinhala_tts_text(spoken_text)
         if piper_text is not None:
             return piper_sinhala_tts.synthesize(piper_text), "audio/wav"
+        if is_english_only_text(spoken_text) and english_tts_provider() == "piper":
+            return piper_english_tts.synthesize(spoken_text), "audio/wav"
 
-        model = _configured_value("GEMINI_TTS_MODEL", TTS_MODEL_DEFAULT)
+        model =_configured_value("GEMINI_TTS_MODEL", TTS_MODEL_DEFAULT)
         chosen_voice = voice or _configured_value("GEMINI_TTS_VOICE", TTS_VOICE_DEFAULT)
         timeout = _timeout_seconds("GEMINI_TTS_TIMEOUT_SECONDS", 90)
         response = requests.post(

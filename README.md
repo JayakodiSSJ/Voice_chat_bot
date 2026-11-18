@@ -180,6 +180,19 @@ Common backend environment variables include:
 | `GEMINI_TTS_ENGLISH_VOICE` | Optional Gemini prebuilt voice for English responses | `Aoede` |
 | `GEMINI_TTS_VOICE` | Legacy shared Gemini voice override | `Aoede` |
 | `PIPER_SINHALA_MODEL_PATH` | Local Piper Sinhala ONNX voice path | `/app/models/si_LK-sinhala-medium.onnx` |
+| `ENGLISH_TTS_PROVIDER` | English speech engine: local `piper` or `gemini` | `piper` |
+| `PIPER_ENGLISH_MODEL_PATH` | Local Piper English ONNX voice path | `/app/models/en_US-lessac-medium.onnx` |
+| `STT_PROVIDER` | Speech-to-text engine: local `whisper` or `gemini` | `whisper` |
+| `WHISPER_MODEL_PATH` | Local faster-whisper (CTranslate2) model directory | `/app/models/whisper` |
+| `WHISPER_COMPUTE_TYPE` | faster-whisper CPU precision | `int8` |
+| `WHISPER_CPU_THREADS` | CPU threads per Whisper transcription | `4` |
+| `WHISPER_BEAM_SIZE` | Whisper decoding beam size (lower is faster) | `5` |
+| `WEB_CRAWL_BROWSER` | Website crawling with headless Chromium: `auto` (only for pages whose plain HTML has little text, e.g. React/Vue/Nuxt sites, or that refuse plain requests), `always`, or `never`. A website source can override it with `"browser"` in its crawl settings | `auto` |
+| `WEB_CRAWL_BROWSER_MIN_CHARS` | In `auto` mode, pages with less plain text than this are re-read in the browser | `1000` |
+| `WEB_CRAWL_BROWSER_TIMEOUT_SECONDS` | Maximum time to load one page in the browser | `30` |
+| `WEB_CRAWL_BROWSER_IDLE_WAIT_SECONDS` | How long to wait for a page's network activity to settle | `8` |
+| `WEB_CRAWL_BROWSER_DELAY_SECONDS` | Pause after each page opened in the browser, to keep crawls polite (plain pages use `WEB_CRAWL_DELAY_SECONDS`) | `4` |
+| `KB_INGESTION_STALE_MINUTES` | A source that already has a pending/running ingestion job younger than this is not ingested again in parallel; the existing job is returned | `30` |
 | `GEMINI_UPLOAD_TIMEOUT_SECONDS` | Gemini audio upload timeout | `30` |
 | `GEMINI_STT_TIMEOUT_SECONDS` | Gemini speech recognition timeout | `90` |
 | `GEMINI_TTS_TIMEOUT_SECONDS` | Gemini speech synthesis timeout | `90` |
@@ -193,6 +206,15 @@ Common backend environment variables include:
 The frontend uses `REACT_APP_API_URL` when provided and otherwise sends requests to the same-origin `/api` path.
 
 ### Voice assistant setup and manual checks
+
+By default, voice runs locally with no Gemini usage limits: speech-to-text uses a
+faster-whisper model (`Systran/faster-whisper-small`, MIT) and English replies use
+the Piper `en_US-lessac-medium` voice. Both are downloaded when the backend image is
+built. To try a different Whisper model, such as a Sinhala fine-tune in CTranslate2
+format, rebuild with `--build-arg WHISPER_MODEL_REPO=<huggingface-repo>`. Set
+`STT_PROVIDER=gemini` or `ENGLISH_TTS_PROVIDER=gemini` to return to the Gemini routes
+described below. Mixed Sinhala/English replies with unlisted English terms, and
+Tamil replies, still use Gemini TTS.
 
 The voice screen uses the Gemini Developer API's `gemini-3.5-transcribe` model
 for transcription. Sinhala responses, including recognized package terms such

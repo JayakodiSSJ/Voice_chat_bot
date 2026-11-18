@@ -7,6 +7,7 @@ import { VOICE_LANGUAGES } from "./voice/languages";
 import { createPcmWavRecorder, stopAudioPlayback } from "./voice/audioUtils";
 import { createVoiceActivityDetector } from "./voice/voiceActivity";
 import { fetchTtsWithRetry, quotaErrorMessage } from "./voice/voiceRequests";
+import { splitIntoSpeechChunks } from "./voice/speechChunks";
 import { URL } from "../urls";
 import { getToken } from "../auth/authClient";
 import "./VoiceAgentChat.css";
@@ -48,16 +49,6 @@ const isAgentExpired = (agent) => {
   const expiryDate = new Date(createdAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   return new Date() > expiryDate;
 };
-
-const cleanForSpeech = (text) =>
-  String(text || "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+[.)]\s+/gm, "")
-    .replace(/[*_`~]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 
 // Auto-stop tuning: how loud counts as speech, how long a silence has to last
 // before we treat it as "done talking", and a hard cap so listening can never
@@ -350,7 +341,8 @@ const VoiceAgentChat = ({ userRole }) => {
   const speak = async (text, { autoListen = false, onEnd = null } = {}) => {
     const sessionId = voiceSessionIdRef.current;
     const sessionIsCurrent = () => sessionId === voiceSessionIdRef.current;
-    const spoken = cleanForSpeech(text);
+    // Speak sentence by sentence: the first chunk plays while later chunks are synthesized.
+    const chunks = splitIntoSpeechChunks(text);
     const finish = () => {
       if (!sessionIsCurrent()) return;
       speechActiveRef.current = false;
@@ -359,7 +351,7 @@ const VoiceAgentChat = ({ userRole }) => {
       else setAgentState("idle");
       onEnd?.();
     };
-    if (!spoken) {
+    if (!chunks.length) {
       finish();
       return;
     }
@@ -375,6 +367,90 @@ const VoiceAgentChat = ({ userRole }) => {
     speechRequestControllerRef.current?.abort();
     const requestController = new AbortController();
     speechRequestControllerRef.current = requestController;
+    const { signal } = requestController;
+
+    const fetchChunkAudio = async (chunkText, index) => {
+      const jwt = getToken();
+      const response = await fetchTtsWithRetry(URL.VOICE_TTS, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+        },
+        body: JSON.stringify({ text: chunkText }),
+        signal,
+      });
+      const provider = response.headers?.get?.("X-Speech-Provider") || "unknown";
+      logVoiceDiagnostic("tts_response", { chunk: index, status: response.status, provider });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        logVoiceDiagnostic("tts_failed", { chunk: index, status: response.status, errorCode: data.error || "unknown" });
+        if (response.status === 429) {
+          const error = new Error(quotaErrorMessage(data, response.headers?.get?.("Retry-After")));
+          error.status = response.status;
+          error.quotaExceeded = true;
+          throw error;
+        }
+        throw new Error(apiErrorMessage(data, response.status));
+      }
+      const audioBlob = await response.blob();
+      if (!audioBlob.size || !audioBlob.type.startsWith("audio/")) {
+        throw new Error("The speech service returned an empty or unsupported audio response.");
+      }
+      return audioBlob;
+    };
+
+    // Each chunk's audio is requested at most once; requests run ahead of playback.
+    const pendingAudio = [];
+    const requestChunk = (index) => {
+      if (index < chunks.length && !pendingAudio[index]) {
+        pendingAudio[index] = fetchChunkAudio(chunks[index], index);
+        // Errors are handled when the chunk is awaited; avoid unhandled-rejection noise.
+        pendingAudio[index].catch(() => {});
+      }
+      return pendingAudio[index];
+    };
+
+    const playChunk = (audioEl, audioBlob) =>
+      new Promise((resolve, reject) => {
+        releaseAudioUrl();
+        const audioUrl = window.URL.createObjectURL(audioBlob);
+        audioObjectUrlRef.current = audioUrl;
+        const cleanup = () => {
+          audioEl.onended = null;
+          audioEl.onerror = null;
+          signal.removeEventListener("abort", onAbort);
+        };
+        // Stopping pauses the element without firing "ended", so settle on abort too.
+        const onAbort = () => {
+          cleanup();
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        audioEl.onended = () => {
+          cleanup();
+          releaseAudioUrl();
+          resolve();
+        };
+        audioEl.onerror = () => {
+          cleanup();
+          releaseAudioUrl();
+          const playbackError = new Error("The generated speech audio could not be played. I'll keep listening.");
+          playbackError.playbackFailed = true;
+          reject(playbackError);
+        };
+        audioEl.src = audioUrl;
+        audioEl.load();
+        audioEl
+          .play()
+          .then(() => startSpeechAnalyser(audioEl))
+          .catch((err) => {
+            cleanup();
+            releaseAudioUrl();
+            reject(err);
+          });
+      });
+
     try {
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
       const currentAudio = audioPlayerRef.current;
@@ -385,67 +461,29 @@ const VoiceAgentChat = ({ userRole }) => {
       }
       releaseAudioUrl();
 
-      const jwt = getToken();
-      const response = await fetchTtsWithRetry(URL.VOICE_TTS, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-        },
-        body: JSON.stringify({ text: spoken }),
-        signal: requestController.signal,
-      });
-      const provider = response.headers?.get?.("X-Speech-Provider") || "unknown";
-      logVoiceDiagnostic("tts_provider_selected", { provider });
-      logVoiceDiagnostic("tts_response", {
-        status: response.status,
-      });
-      if (!sessionIsCurrent()) return;
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        logVoiceDiagnostic("tts_failed", { status: response.status, errorCode: data.error || "unknown" });
-        if (response.status === 429) {
-          const error = new Error(quotaErrorMessage(data, response.headers?.get?.("Retry-After")));
-          error.status = response.status;
-          error.quotaExceeded = true;
-          throw error;
+      logVoiceDiagnostic("tts_chunks", { count: chunks.length });
+      requestChunk(0);
+      requestChunk(1);
+
+      for (let index = 0; index < chunks.length; index += 1) {
+        const audioBlob = await requestChunk(index);
+        if (!sessionIsCurrent()) return;
+        // Synthesize the following chunk while this one plays.
+        requestChunk(index + 1);
+
+        const audioEl = audioPlayerRef.current;
+        if (!audioEl) throw new Error("Audio playback is unavailable.");
+        if (index === 0) {
+          await prepareSpeechAnalyser(audioEl);
+          if (!sessionIsCurrent()) return;
+          setAgentState("speaking");
         }
-        throw new Error(apiErrorMessage(data, response.status));
+        logVoiceDiagnostic("playback_started", { chunk: index, bytes: audioBlob.size });
+        await playChunk(audioEl, audioBlob);
+        if (!sessionIsCurrent()) return;
       }
-
-      const audioBlob = await response.blob();
-      if (!sessionIsCurrent()) return;
-      if (!audioBlob.size || !audioBlob.type.startsWith("audio/")) {
-        throw new Error("The speech service returned an empty or unsupported audio response.");
-      }
-      const audioEl = audioPlayerRef.current;
-      if (!audioEl) throw new Error("Audio playback is unavailable.");
-
-      const audioUrl = window.URL.createObjectURL(audioBlob);
-      audioObjectUrlRef.current = audioUrl;
-      audioEl.src = audioUrl;
-      audioEl.load();
-      audioEl.onended = () => {
-        logVoiceDiagnostic("playback_completed");
-        releaseAudioUrl();
-        finish();
-      };
-      audioEl.onerror = () => {
-        logVoiceDiagnostic("playback_failed");
-        console.error("The generated speech audio could not be played.");
-        setError("The generated speech audio could not be played. I'll keep listening.");
-        stopSpeechAnalyser();
-        releaseAudioUrl();
-        finish();
-      };
-
-      await prepareSpeechAnalyser(audioEl);
-      if (!sessionIsCurrent()) return;
-      setAgentState("speaking");
-      await audioEl.play();
-      if (!sessionIsCurrent()) return;
-      logVoiceDiagnostic("playback_started", { bytes: audioBlob.size });
-      startSpeechAnalyser(audioEl);
+      logVoiceDiagnostic("playback_completed", { chunks: chunks.length });
+      finish();
     } catch (err) {
       if (err.name !== "AbortError" && sessionIsCurrent()) {
         console.error("Voice playback error:", err);
@@ -454,11 +492,17 @@ const VoiceAgentChat = ({ userRole }) => {
           setError(err.message);
           setAgentState("stopped");
         } else {
+          if (err.playbackFailed) logVoiceDiagnostic("playback_failed");
+          stopSpeechAnalyser();
           setError(err.message || "Speech playback is unavailable. I'll keep listening.");
           finish();
         }
       }
     } finally {
+      if (!signal.aborted && speechRequestControllerRef.current === requestController) {
+        // Cancel any look-ahead request that is no longer needed after an error.
+        requestController.abort();
+      }
       if (speechRequestControllerRef.current === requestController) {
         speechRequestControllerRef.current = null;
       }

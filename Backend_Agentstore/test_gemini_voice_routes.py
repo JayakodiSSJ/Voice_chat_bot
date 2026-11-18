@@ -42,12 +42,12 @@ class GeminiVoiceRouteTests(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_voice_readiness_checks_gemini_configuration(self):
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "STT_PROVIDER": "gemini"}):
             response = self.client.get("/api/auth/voice/ready")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"ready": True, "provider": "gemini"})
 
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"STT_PROVIDER": "gemini"}, clear=True):
             response = self.client.get("/api/auth/voice/ready")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json()["error"], "gemini_not_configured")
@@ -55,7 +55,7 @@ class GeminiVoiceRouteTests(unittest.TestCase):
     def test_stt_preserves_contract_and_does_not_claim_confidence(self):
         transcript = "මට Fiber package එකක් ඕනේ."
         with (
-            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
+            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "STT_PROVIDER": "gemini"}),
             patch.object(auth_routes.gemini_service, "transcribe_audio", return_value=transcript) as transcribe,
         ):
             response = self.client.post(
@@ -157,7 +157,7 @@ class GeminiVoiceRouteTests(unittest.TestCase):
 
     def test_tts_rate_limit_errors_are_user_friendly_and_do_not_leak_provider_details(self):
         with (
-            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
+            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "ENGLISH_TTS_PROVIDER": "gemini"}),
             patch.object(
                 auth_routes.gemini_service,
                 "synthesize_speech",
@@ -180,7 +180,7 @@ class GeminiVoiceRouteTests(unittest.TestCase):
 
     def test_daily_tts_quota_is_classified_without_exposing_provider_details(self):
         with (
-            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
+            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "ENGLISH_TTS_PROVIDER": "gemini"}),
             patch.object(
                 auth_routes.gemini_service,
                 "synthesize_speech",
@@ -203,7 +203,7 @@ class GeminiVoiceRouteTests(unittest.TestCase):
 
     def test_stt_rate_limit_response_includes_retry_after(self):
         with (
-            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}),
+            patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "STT_PROVIDER": "gemini"}),
             patch.object(
                 auth_routes.gemini_service,
                 "transcribe_audio",
@@ -223,6 +223,100 @@ class GeminiVoiceRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.get_json()["error"], "gemini_daily_quota_exceeded")
         self.assertEqual(response.headers["Retry-After"], "57315")
+
+    def test_voice_readiness_uses_local_whisper_without_a_gemini_key(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(auth_routes.whisper_stt, "is_installed", return_value=True),
+        ):
+            response = self.client.get("/api/auth/voice/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"ready": True, "provider": "whisper"})
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(auth_routes.whisper_stt, "is_installed", return_value=False),
+        ):
+            response = self.client.get("/api/auth/voice/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"], "speech_model_unavailable")
+
+    def test_stt_uses_local_whisper_by_default_and_keeps_contract(self):
+        transcript = "මට Fiber package එකක් ඕනේ."
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(auth_routes.whisper_stt, "transcribe", return_value=transcript) as transcribe,
+            patch.object(auth_routes.gemini_service, "transcribe_audio") as gemini_transcribe,
+        ):
+            response = self.client.post(
+                "/api/auth/voice/stt",
+                data={
+                    "language": "si",
+                    "audio": (io.BytesIO(make_wav()), "voice.wav", "audio/wav"),
+                },
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "text": transcript,
+                "language": "si-LK",
+                "confidence": None,
+                "low_confidence": True,
+            },
+        )
+        self.assertEqual(transcribe.call_args.kwargs["language_code"], "si-LK")
+        gemini_transcribe.assert_not_called()
+
+    def test_stt_whisper_failure_returns_controlled_error(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                auth_routes.whisper_stt,
+                "transcribe",
+                side_effect=RuntimeError("The local Whisper speech recognition model is not installed."),
+            ),
+        ):
+            response = self.client.post(
+                "/api/auth/voice/stt",
+                data={"audio": (io.BytesIO(make_wav()), "voice.wav", "audio/wav")},
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"], "speech_model_unavailable")
+
+    def test_english_tts_uses_local_piper_without_a_gemini_key(self):
+        wav = make_wav()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("gemini_service.piper_english_tts.synthesize", return_value=wav) as piper_synthesize,
+            patch("gemini_service.requests.post") as gemini_request,
+        ):
+            response = self.client.post("/api/auth/voice/tts", json={"text": "Hello, how can I help?"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "audio/wav")
+        self.assertEqual(response.headers["X-Speech-Provider"], "piper")
+        self.assertEqual(response.data, wav)
+        piper_synthesize.assert_called_once_with("Hello, how can I help?")
+        gemini_request.assert_not_called()
+
+    def test_local_piper_failure_returns_controlled_error(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "gemini_service.piper_english_tts.synthesize",
+                side_effect=RuntimeError("The local Piper English voice model is not installed."),
+            ),
+        ):
+            response = self.client.post("/api/auth/voice/tts", json={"text": "Hello."})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.get_json()["error"], "speech_synthesis_failed")
+        self.assertNotIn("Gemini", response.get_json()["message"])
 
     def test_voice_endpoints_remain_authenticated(self):
         app = Flask("auth_required_voice_routes")
